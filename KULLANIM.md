@@ -1,6 +1,8 @@
 # Okan Durak — Python masaüstü uygulaması
 
-İstanbul Okan Üniversitesi **Tuzla kampüsü** için minimal, koyu temalı İETT ekranı. Hatlar tek yatay sırada, pencere boyutuna uyarlanarak görünür; ana ekranda kaydırma yoktur. Bir karta dokununca aynı pencerede tüm sefer tarifeleri açılır.
+İstanbul Okan Üniversitesi **Tuzla kampüsü** için koyu temalı otobüs ekranı. Okan'ın ring tarifeleri üstte kare kartlarda, İETT belediye otobüsleri altta tek yatay sırada görünür. Kartlara dokununca tüm saatler açılır.
+
+Ring tarifeleri `https://www.okan.edu.tr/sayfa/7459/ring-seferleri/` sayfasından okunur ve `%LOCALAPPDATA%\\OkanDurak\\ring_cache.json` dosyasında saklanır. Kayıt 12 saat boyunca kullanılır; süresi dolunca Okan sayfası yeniden taranır. Yenileme bağlantısı başarısız olursa son kayıtlı tarife ekranda kalır. Sayfa yayımlanmış kalkış saatlerini verir; ring araçları için canlı konum, anlık varış ve iptal bilgisi sağlamaz. İETT verilerinin yenileme sıklığı bundan bağımsızdır.
 
 ## Çalıştırma
 

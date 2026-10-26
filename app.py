@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from iett_client import IettClient, ISTANBUL, day_index, upcoming
+from ring_client import RingClient, next_departure
 
 BG = '#181818'
 CARD = '#222222'
@@ -35,8 +36,10 @@ class App:
         self.busy = False
         self.closed = False
         self.client = IettClient()
+        self.ring_client = RingClient(self.log_dir / 'ring_cache.json')
         self.results = queue.Queue()
         self.selected = None
+        self.selected_ring = None
         self.page = 'board'
         self.feedback_route = None
         self.feedback_message = ''
@@ -58,7 +61,7 @@ class App:
         root.title('Okan Durak')
         root.configure(bg=BG)
         root.geometry('1360x760')
-        root.minsize(800, 450)
+        root.minsize(800, 620)
         self.canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
         self.feedback_text_widget = tk.Text(
@@ -264,6 +267,9 @@ class App:
             self.draw_feedback(w, h, pad)
             self.draw_keyboard(w, h, pad)
             return
+        if self.page == 'ring_detail':
+            self.draw_ring_detail(w, h, pad)
+            return
         if self.page == 'feedback_log':
             self.draw_feedback_log(w, h, pad)
             return
@@ -273,18 +279,25 @@ class App:
             return
         if self.page == 'admin':
             self.draw_admin(w, h, pad)
+            self.label(pad, h - 10, 'yusuf emre bilir tarafından geliştirilmiştir', 7, MUTED)
             return
         if self.page == 'admin_detail':
             self.draw_admin_detail(w, h, pad)
+            self.label(pad, h - 10, 'yusuf emre bilir tarafından geliştirilmiştir', 7, MUTED)
             return
         if self.selected:
             self.draw_detail(w, h, pad)
             return
-        self.label(pad, 104, 'Kampüs durağına geliş saatleri · Tüm seferler için hatta tıkla.', 9, MUTED, width=w - 2 * pad - 415)
-        self.button(w - pad - 405, 91, 300, 'Otobüs zamanında geldi mi? Bize bildir', self.open_feedback, prominent=True)
-        self.button(w - pad - 95, 94, 95, 'Yenileniyor…' if self.busy else 'Yenile', self.refresh)
-        self.label(w - pad - 275, 142, '● Canlı tahmin', 8, LIVE_GREEN, anchor='ne')
-        self.label(w - pad - 115, 142, '● Hesaplanan', 8, AMBER, anchor='ne')
+        self.label(pad, 104, 'Okan ring tarifeleri ve belediye otobüsleri', 9, MUTED, width=w - 2 * pad - 440)
+        self.button(w - pad - 435, 91, 340, 'Otobüs zamanında geldi mi? Bize bildir', self.open_feedback, prominent=True)
+        self.button(w - pad - 85, 94, 85, 'Yenileniyor…' if self.busy else 'Yenile', self.refresh)
+        ring_routes = self.board.get('ring_routes', []) if self.board else []
+        ring_error = self.board.get('ring_error', '') if self.board else ''
+        ring_bottom = self.draw_ring_row(w, h, pad, ring_routes, ring_error)
+        main_heading_y = ring_bottom + 13
+        self.label(pad, main_heading_y, 'İETT belediye otobüsleri · karta dokun: tüm saatler', 10, TEXT,
+                   bold=True, width=w - 2 * pad - 220)
+        self.label(w - pad, main_heading_y + 2, '● Canlı tahmin    ● Hesaplanan', 8, MUTED, anchor='ne')
         routes = self.board['routes'] if self.board else []
         n = len(routes)
         warnings = []
@@ -298,15 +311,15 @@ class App:
                 c.delete(probe)
         warning_height = sum(height for _, height in warnings)
         if not n:
-            self.label(w / 2, h / 2, self.error or 'İETT’ye bağlanılıyor…', 17, MUTED, 'center', width=w - 80)
+            self.label(w / 2, main_heading_y + 100, self.error or 'İETT’ye bağlanılıyor…', 14, MUTED, 'center', width=w - 80)
         else:
             gap = max(8, min(18, w * .012))
             cw = (w - 2 * pad - gap * (n - 1)) / n
             feedback_rows = self.read_feedback()
-            top = 155
-            bottom = max(top + 230, h - 95 - warning_height)
+            top = main_heading_y + 31
+            bottom = max(top + 190, h - 95 - warning_height)
             ch = bottom - top
-            scale = min(1.18, cw / 205, ch / 330)
+            scale = min(1.18, cw / 205, ch / 290)
             for index, route in enumerate(routes):
                 x = pad + index * (cw + gap)
                 tag = 'route_' + route['code']
@@ -319,7 +332,7 @@ class App:
                 c.create_line(x + inner, top + 83 * scale, x + cw - inner, top + 83 * scale, fill=LINE, tags=tag)
                 entries = upcoming(route)
                 next_bus = entries[0] if entries else None
-                y = top + 105 * scale
+                y = top + 65 * scale
                 heading = ('Tahmini varış' if next_bus.get('live') else 'Sinyal belirsiz' if next_bus.get('uncertain') else 'Hesaplanan varış' if next_bus.get('estimated') else 'Planlı kampüs kalkışı') if next_bus else 'Tahmini varış'
                 self.label(x + inner, y, heading, 9 * scale, MUTED, tag=tag)
                 time_label = ('~' if next_bus.get('estimated') else '') + next_bus['time'] if next_bus else '—'
@@ -332,46 +345,44 @@ class App:
                         remaining = 'Yarın' if next_bus['days_ahead'] == 1 else next_bus['arrival_date'][8:10] + '.' + next_bus['arrival_date'][5:7] + ' tarihinde'
                     self.label(x + inner, y + 77 * scale, remaining, 13 * scale, eta_color, tag=tag)
                     destination = next_bus.get('destination', '').rsplit(' - ', 1)[-1]
-                    if next_bus.get('live') or next_bus.get('uncertain'):
+                    if (next_bus.get('live') or next_bus.get('uncertain')) and ch > 350:
                         self.label(x + inner, y + 112 * scale, 'Yön: ' + destination, 8 * scale, MUTED, width=cw - 2 * inner, tag=tag)
-                        if ch > 280:
+                        if ch > 430:
                             self.label(x + inner, y + 147 * scale, 'Kaynak: İETT · ' + next_bus['stop'], 8 * scale, MUTED, width=cw - 2 * inner, tag=tag)
                     elif next_bus.get('estimated'):
                         self.label(x + inner, y + 109 * scale, f"Yaklaşık · ±{next_bus['margin']} dk model payı", 8 * scale, AMBER, width=cw - 2 * inner, tag=tag)
-                        if ch > 280:
+                        if ch > 430:
                             self.label(x + inner, y + 133 * scale, 'Yön: ' + destination + '\nTarife + durak sırası · GPS yok', 8 * scale, MUTED, width=cw - 2 * inner, tag=tag)
                     else:
                         self.label(x + inner, y + 112 * scale, 'Tarifeden · Canlı tahmin değil', 8 * scale, MUTED, width=cw - 2 * inner, tag=tag)
                 else:
                     reason = 'İETT şu an araç tahmini paylaşmıyor.' if route.get('arrivals_available', True) else 'Canlı veri bağlantısı kurulamadı.'
                     self.label(x + inner, y + 81 * scale, reason, 9 * scale, MUTED, width=cw - 2 * inner, tag=tag)
-                if ch > 310:
-                    route_feedback = [r for r in feedback_rows if r.get('hat') == route['code']
-                                      and r.get('geri_bildirim') in ('zamaninda', 'gec', 'gelmedi_iptal')]
-                    total_feedback = len(route_feedback)
-                    on_time = sum(r.get('geri_bildirim') == 'zamaninda' for r in route_feedback)
-                    stats_y = bottom - 144 * scale
-                    self.label(x + inner, stats_y, 'BU HATTA ZAMANINDA GELME', 7.5 * scale, MUTED, tag=tag)
-                    if total_feedback:
-                        accuracy = round(on_time * 100 / total_feedback)
-                        stat_text = f'%{accuracy} zamanında  ·  {total_feedback} bildirim'
-                        self.label(x + inner, stats_y + 18 * scale, stat_text, 9 * scale,
-                                   LIVE_GREEN if accuracy >= 70 else AMBER, bold=True, tag=tag)
-                        bar_x, bar_y = x + inner, stats_y + 39 * scale
+                route_feedback = [r for r in feedback_rows if r.get('hat') == route['code']
+                                  and r.get('geri_bildirim') in ('zamaninda', 'gec', 'gelmedi_iptal')]
+                total_feedback = len(route_feedback)
+                on_time = sum(r.get('geri_bildirim') == 'zamaninda' for r in route_feedback)
+                stats_y = bottom - 91 * scale
+                if total_feedback:
+                    accuracy = round(on_time * 100 / total_feedback)
+                    stat_text = f'Geri bildirim  %{accuracy} zamanında · {total_feedback} yanıt'
+                    self.label(x + inner, stats_y, stat_text, 8 * scale,
+                               LIVE_GREEN if accuracy >= 70 else AMBER, bold=True, tag=tag)
+                    if ch > 420:
+                        bar_x, bar_y = x + inner, stats_y + 17 * scale
                         bar_w = cw - 2 * inner
                         c.create_rectangle(bar_x, bar_y, bar_x + bar_w, bar_y + 5 * scale,
                                            fill='#363636', outline='', tags=tag)
                         c.create_rectangle(bar_x, bar_y, bar_x + bar_w * accuracy / 100,
                                            bar_y + 5 * scale, fill=LIVE_GREEN if accuracy >= 70 else AMBER,
                                            outline='', tags=tag)
-                    else:
-                        self.label(x + inner, stats_y + 18 * scale, 'Bu hat için henüz bildirim yok',
-                                   8 * scale, MUTED, tag=tag)
+                else:
+                    self.label(x + inner, stats_y, 'Henüz öğrenci bildirimi yok', 8 * scale, MUTED, tag=tag)
                 status, color = self.status(route)
-                c.create_line(x + inner, bottom - 81 * scale, x + cw - inner, bottom - 81 * scale, fill=LINE, tags=tag)
-                self.label(x + inner, bottom - 66 * scale, '●', 9 * scale, color, tag=tag)
-                self.label(x + inner + 15 * scale, bottom - 66 * scale, status, 8 * scale, color, width=cw - 2 * inner - 20 * scale, tag=tag)
-                self.label(x + inner, bottom - 34 * scale, 'Tüm sefer saatleri  →', 9 * scale, ACCENT, tag=tag)
+                c.create_line(x + inner, bottom - 65 * scale, x + cw - inner, bottom - 65 * scale, fill=LINE, tags=tag)
+                self.label(x + inner, bottom - 52 * scale, '●', 9 * scale, color, tag=tag)
+                self.label(x + inner + 15 * scale, bottom - 52 * scale, status, 8 * scale, color, width=cw - 2 * inner - 20 * scale, tag=tag)
+                self.label(x + inner, bottom - 22 * scale, 'Tüm sefer saatleri  →', 9 * scale, ACCENT, tag=tag)
                 c.tag_bind(tag, '<Button-1>', lambda _, code=route['code']: self.open_detail(code))
                 c.tag_bind(tag, '<Enter>', lambda _: c.configure(cursor='hand2'))
                 c.tag_bind(tag, '<Leave>', lambda _: c.configure(cursor=''))
@@ -402,6 +413,110 @@ class App:
         self.page = 'board'
         self.selected = code
         self.day = day_index()
+        self.draw()
+
+    def draw_ring_row(self, w, h, pad, routes, error=''):
+        """Draw compact, square campus-ring cards above the IETT board."""
+        title_y = 150
+        self.label(pad, title_y, 'OKAN KAMPÜS RİNGİ', 9, TEXT, bold=True)
+        ring_status = 'karta dokun: tüm saatler'
+        if self.board and self.board.get('ring_updated_at'):
+            stamp = datetime.fromtimestamp(self.board['ring_updated_at'], ISTANBUL).strftime('%H:%M')
+            ring_status = ('Önbellek · ' if self.board.get('ring_cached') else 'Siteden · ') + stamp + ' · 12 saatte bir · tüm saatler'
+        self.label(w - pad, title_y, ring_status,
+                   8, MUTED, anchor='ne')
+        top = title_y + 21
+        gap = max(5, min(10, w * .007))
+        count = max(1, len(routes))
+        cell_w = (w - 2 * pad - gap * (count - 1)) / count
+        size = min(cell_w, 104, max(70, h * .145))
+        bottom = top + size
+        if not routes:
+            self.label(w / 2, top + size / 2, 'Ring tarifeleri yükleniyor…' if not error else 'Ring tarifesi şu an alınamadı',
+                       10, MUTED, 'center')
+            return bottom
+        now = datetime.now(ISTANBUL)
+        for index, route in enumerate(routes):
+            x = pad + index * (cell_w + gap)
+            tag = 'ring_' + str(index)
+            self.canvas.create_rectangle(x, top, x + cell_w, bottom, fill=CARD, outline=LINE, width=1, tags=tag)
+            name_size = max(7, min(10, size * .095))
+            max_chars = max(8, int((cell_w - 12) / (name_size * .62)))
+            name_lines = []
+            for part in route['name'].split(' / '):
+                name_lines.append(part if len(part) <= max_chars else part[:max_chars - 1].rstrip() + '…')
+            name = '\n'.join(name_lines[:2])
+            self.label(x + cell_w / 2, top + 5, name, name_size, TEXT,
+                       'n', width=cell_w - 8, bold=True, tag=tag)
+            directions = route.get('directions', [])
+            going = next((d for d in directions if d['side'] == 'to_campus'), None)
+            coming = next((d for d in directions if d['side'] == 'from_campus'), None)
+            first = next_departure(going, now) if going else None
+            second = next_departure(coming, now) if coming else None
+            base = top + size * .48
+            for line, label, item in ((0, '→', first), (1, '←', second)):
+                y = base + line * size * .23
+                self.label(x + 7, y, label, 9, MUTED, tag=tag)
+                time_text = item['time'] if item else '—'
+                self.label(x + 21, y, time_text, max(9, min(15, size * .145)), LIVE_GREEN if item else MUTED,
+                           bold=True, tag=tag)
+                if item:
+                    when = (f"{item['minutes']} dk" if item['days_ahead'] == 0 else item['day_name'])
+                    self.label(x + cell_w - 6, y + 2, when, max(7, min(9, size * .085)), MUTED, 'ne', tag=tag)
+            self.canvas.tag_bind(tag, '<Button-1>', lambda _, key=route['key']: self.open_ring_detail(key))
+            self.canvas.tag_bind(tag, '<Enter>', lambda _: self.canvas.configure(cursor='hand2'))
+            self.canvas.tag_bind(tag, '<Leave>', lambda _: self.canvas.configure(cursor=''))
+        return bottom
+
+    def open_ring_detail(self, key):
+        self.selected_ring = key
+        self.page = 'ring_detail'
+        self.draw()
+
+    def draw_ring_detail(self, w, h, pad):
+        routes = self.board.get('ring_routes', []) if self.board else []
+        route = next((r for r in routes if r['key'] == self.selected_ring), None)
+        self.button(pad, 98, 100, '← Ana sayfa', self.leave_ring_detail, active=True)
+        if not route:
+            self.label(pad, 165, 'Ring tarifesi bulunamadı.', 14, MUTED)
+            return
+        self.label(pad, 155, route['name'] + ' ring tarifesi', 19, TEXT, bold=True)
+        updated = self.board.get('ring_updated_at') if self.board else None
+        if updated:
+            self.label(pad, 185, 'Okan Üniversitesi · son tarife kontrolü ' +
+                       datetime.fromtimestamp(updated, ISTANBUL).strftime('%d.%m.%Y %H:%M'), 9, MUTED)
+        self.label(pad, 207, 'Bu, yayımlanan kalkış tarifesidir; canlı araç konumu ve anlık iptal bilgisi içermez.',
+                   9, AMBER, width=w - 2 * pad)
+        directions = route.get('directions', [])
+        count = max(1, len(directions))
+        gap = 22
+        bw = (w - 2 * pad - gap * (count - 1)) / count
+        for ix, direction in enumerate(directions):
+            x = pad + ix * (bw + gap)
+            arrow = '  →  ' if direction['side'] == 'to_campus' else '  ←  '
+            title = direction['title'].replace(' - ', arrow)
+            title_id = self.label(x, 245, title, 11, TEXT, bold=True, width=bw)
+            title_bounds = self.canvas.bbox(title_id)
+            schedules = direction.get('schedules', [])
+            row_y = max(279, title_bounds[3] + 14 if title_bounds else 279)
+            if not schedules:
+                self.label(x, row_y, 'Tarife bulunamadı.', 10, MUTED)
+            for schedule in schedules:
+                self.label(x, row_y, schedule['day'], 9, MUTED)
+                row_y += 22
+                cols = max(3, int(bw / 82))
+                cell_w = bw / cols
+                for j, departure in enumerate(schedule['times']):
+                    col, row = j % cols, j // cols
+                    xx, yy = x + col * cell_w, row_y + row * 38
+                    self.canvas.create_rectangle(xx, yy, xx + cell_w - 6, yy + 31, fill=CARD, outline=LINE)
+                    self.label(xx + (cell_w - 6) / 2, yy + 15, departure, 10, TEXT, 'center')
+                row_y += max(38, math.ceil(len(schedule['times']) / cols) * 38 + 8)
+        self.button(w - pad - 120, h - 51, 120, '⚙  Ayarlar', self.open_admin_login)
+
+    def leave_ring_detail(self):
+        self.page = 'board'
+        self.selected_ring = None
         self.draw()
 
     def close_detail(self):
@@ -830,16 +945,37 @@ class App:
         self.busy = True
         self.draw()
         def work():
-            try:
-                self.results.put((self.client.board(), None))
-            except Exception as exc:
-                logging.exception('İETT bağlantısı')
-                self.results.put((None, str(exc)))
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                iett_future = pool.submit(self.client.board)
+                ring_future = pool.submit(self.ring_client.board)
+                data, error, ring = None, '', None
+                try:
+                    data = iett_future.result()
+                except Exception as exc:
+                    logging.exception('İETT bağlantısı')
+                    error = str(exc)
+                try:
+                    ring = ring_future.result()
+                except Exception as exc:
+                    logging.exception('Okan ring tarifesi')
+                    if data is None:
+                        data = {'routes': [], 'errors': [], 'updated_at': time.time()}
+                    data['ring_error'] = str(exc)
+                if ring:
+                    if data is None:
+                        data = {'routes': [], 'errors': [], 'updated_at': time.time()}
+                    data['ring_routes'] = ring['routes']
+                    data['ring_updated_at'] = ring['updated_at']
+                    data['ring_cached'] = ring.get('cached', False)
+                    data['ring_error'] = ''
+                self.results.put((data, error, ring))
         threading.Thread(target=work, daemon=True).start()
 
     def poll(self):
         try:
-            data, error = self.results.get_nowait()
+            result = self.results.get_nowait()
+            data, error = result[0], result[1]
             self.busy = False
             if data:
                 self.board = data
@@ -871,6 +1007,8 @@ class App:
             self.set_page('feedback')
         elif self.page == 'feedback':
             self.feedback_back()
+        elif self.page == 'ring_detail':
+            self.leave_ring_detail()
         elif self.selected:
             self.close_detail()
         return 'break'
