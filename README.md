@@ -1,48 +1,55 @@
-# Okan Ulaşım
+# Okan Durak
 
-Okan Üniversitesi **Tuzla kampüsü** duraklarından geçen İETT hatlarını tek ekranda gösteren, mobil uyumlu web uygulaması.
+**Güncel sürüm: Python masaüstü uygulaması.** Hatlar yatay ve kaydırmasız görünür. Normal açmak için **`baslat.vbs`**, tam ekran kiosk için **`kiosk.vbs`** dosyasına çift tıklayın. Python 3.10+ ve Tcl/Tk yeterlidir; harici paket veya Node.js gerekmez.
 
-## Çalıştırma
+**[Python kurulumu, kiosk modu ve başlangıç dosyaları → KULLANIM.md](KULLANIM.md)**
 
-Python 3.11+ gerekir. Harici Python paketi, Node.js, API anahtarı veya veritabanı gerekmez.
+Python testleri: `python -m unittest -v`. Kaynaklar: `app.py`, `iett_client.py`.
+
+---
+
+Aşağıdaki bilgiler önceki web sürümüne aittir. Python uygulaması web sunucusunu kullanmaz.
+
+İstanbul Okan Üniversitesi **Tuzla kampüsü** için mobil uyumlu, koyu temalı İETT ekranı. Node.js 22 veya üzeri yeterlidir; bağımlılık kurulumu gerekmez.
 
 ```sh
-cd /workspace/okanotob-ssistemi
-python server.py
+node server.mjs
 ```
 
-Varsayılan port `3000`; `PORT` ve `HOST` ile değiştirilebilir. Python sürecinin `api.ibb.gov.tr` adresine HTTPS erişimi olmalıdır. Python, ortamın standart HTTPS proxy ayarlarını kullanır; TLS doğrulaması açıktır. Arayüz ve API aynı sunucudan servis edilir.
+Uygulamayı **http://localhost:3000** adresinde açın. Alternatif: `npm start`. Portu `PORT` ortam değişkeniyle değiştirebilirsiniz. Sunucu yalnızca yerel bilgisayarda dinler.
 
 ## Özellikler
 
-- Hat kartları: sıradaki **ilk durak kalkışı**, gün/yön filtreleri ve iptal/hat duyuruları.
-- Karttan açılan erişilebilir detay penceresi: gün ve yön bazında saatler, ilgili duyurular.
-- İstanbul saatiyle hesaplama, dakikada otomatik yenileme, manuel yenileme, hat/güzergâh arama.
-- Sunucu tarafında saatler için 5 dakika, duyurular için 60 saniye önbellek. Kesintide eski veriler açıkça işaretlenir; veri yokluğu “iptal yok” sayılmaz.
+- 209482 ve 209481 duraklarından geçen belediye hatlarını İETT servisinden otomatik keşfeder.
+- Tek ekranda tüm hatlar, sıradaki tahmini varış veya planlı kampüs kalkışı, iptal duyurusu durumu.
+- Bir hatta dokununca iki yöndeki tüm hafta içi / cumartesi / pazar kalkış tarifeleri.
+- Hat / güzergâh araması, bir saat içinde yaklaşan sefer filtresi ve cihazda saklanan favoriler.
+- 30 saniyede bir yenileme, manuel yenileme, bağlantı ve kısmi veri hataları.
+- İstanbul saat dilimi, klavye erişimi, Escape ile kapanan detay penceresi.
 
-## Veri kapsamı ve sınırlar
+## Canlı veri ve anlamı
 
-Kaynak: [İBB açık veri kataloğu](https://data.ibb.gov.tr/api/3/action/package_search?q=iett).
+Sunucu `https://iett.istanbul` adresindeki web uygulamasının kullandığı HTTP servislerine istek yapar; tarayıcı aynı kaynaktaki `/api/board` üzerinden normalize edilmiş JSON alır. API anahtarı gerekmez. Durak/duyuru verisi 30 saniye, hat listesi ve tarife 5 dakika bellekte önbelleklenir. Bu uçlar İETT tarafından değiştirilebilir; entegrasyon `lib/iett.mjs` dosyasındadır.
 
-- Saatler: `https://api.ibb.gov.tr/iett/UlasimAnaVeri/PlanlananSeferSaati.asmx`, `GetPlanlananSeferSaati_json`.
-- Duyurular: `https://api.ibb.gov.tr/iett/UlasimDinamikVeri/Duyurular.asmx`, `GetDuyurular_json`.
-- Durak doğrulama: `https://api.ibb.gov.tr/iett/ibb/ibb.asmx`, `DurakDetay_GYY_wYonAdi`.
+| Servis | Kullanım |
+| --- | --- |
+| `GET /tr/RouteStationAgent/GetRouteByStation?dcode=…&langid=1` | Duraktan geçen hatlar |
+| `GET /tr/RouteStation/GetStationInfo?dcode=…&langid=1` | Tahmini durak varışları |
+| `POST /tr/RouteStation/GetScheduledDepartureTimes` | Form: `hCode`, `lngid`; iki yön ve üç gün türünün tarifesi |
+| `GET /tr/RouteStation/GetLineStatus?rcode=…` | Güncel hat duyuruları |
 
-`data/lines.json` içindeki beş hat (130H, 132D, 133GP, 133P, KM28), 26 Ekim 2026 tarihinde İBB GTFS verisindeki `209481` ve `209482` duraklarından türetildi. KM28, GTFS dosyasında bulunmadığından canlı durak servisiyle ayrıca doğrulandı. GTFS `stop_times → trips → routes` bağlantısıyla bulunan **güzergâh kodları** kullanılır; bir hattın kampüse uğramayan normal seferleri listeye dahil edilmez. KM28 için durak servisiyle doğrulanan D/G ana güzergâhları kullanılır. Katalog otomatik değişmez; hat güzergâhları değişince yeniden doğrulanmalıdır.
+**Durak tahmini ile ilk durak kalkışı farklıdır.** Durak tahmini yoksa yalnızca ilk durağı Okan Üniversitesi olan tarifelerden bir sonraki kampüs kalkışı gösterilir. Ara duraktan geçen bir hattın terminal saatini kampüs varışı gibi göstermez. Veri yoksa saat yerine “—” görünür. Detayda her zaman ilk duraktan kalkış tarifeleri gösterilir. Resmî tatil istisnaları otomatik belirlenmez.
 
-**Önemli:** API kaynakları arasında güzergâh ve hat adı tutarsızlıkları gözlendi. Bazı özel seferler yalnız belirli günlerde çalışır. Hiç sefer görünmemesi hattın tamamen çalışmadığı anlamına gelmez.
+**İptal durumu hat duyurularına dayanır.** Servis tek tek seferlerin kesin iptal durumunu sağlamaz. İptal içeren duyuru varsa uyarı gösterilir; boş duyuru listesi “İptal duyurusu yok”, başarısız istek “Durum bilinmiyor” olarak görünür. Tarife rengi ve özel güzergâh işaretleri iptal olarak yorumlanmaz. Duyuru kapsamını hat detayından okuyabilirsiniz.
 
-Saatler kampüs durağına varış tahmini değildir. Kaynak API'nin `D/G` yön kodları, `I` (hafta içi), `C` (cumartesi), `P` (pazar) gün tipleri gösterilir. Resmî tatil tarifesi otomatik tespit edilmez; kullanıcı gün tipini seçebilir.
-
-İptal duyurularında tam tarih ve makineyle güvenilir eşleşen yön bilgisi bulunmayabilir. Bu nedenle hat bazında duyuru gösterilir; saat eşleşmesi **olası iptal uyarısıdır**, kesin iptal etiketi değildir. Duyuru metni saklanır, seferler otomatik silinmez. “İptal duyurusu yok”, yalnızca son API yanıtında ilgili duyurunun bulunmadığını ifade eder.
+Kayıtlı sahte sefer verisi kullanılmaz. Bağlantı kesilirse son alınan veri yalnızca mevcut sayfa oturumunda uyarıyla tutulur; iki dakikadan eski canlı tahmin kullanılmaz.
 
 ## Doğrulama
 
 ```sh
-python -m unittest discover -s tests -v
-node --check public/app.js  # Node varsa isteğe bağlı sözdizimi kontrolü
-curl --fail http://127.0.0.1:3000/health
-curl --fail http://127.0.0.1:3000/api/dashboard
+node --test
 ```
 
-`/health` süreç kontrolüdür. İşlevsel kontrol için `/api/dashboard` içindeki her hattın `scheduleState.error` ve `noticesState.error` alanlarını, saat listesini ve arayüzü kontrol edin. Testler ağ hatası/önbellek davranışını ve kampüse uğramayan güzergâhların elenmesini kapsar.
+Testler HTML / entity ayrıştırmasını, üç gün sütununun korunmasını, belirsiz varış işaretini, kampüs kalkışı seçimini ve İstanbul gece yarısı / hafta sonu geçişlerini kontrol eder.
+
+Resmî kaynak: [İETT kampüs durağı](https://iett.istanbul/StationDetail?dkod=209482). İETT veya Okan Üniversitesi'nin resmî uygulaması değildir.

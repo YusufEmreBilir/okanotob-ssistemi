@@ -1,4 +1,6 @@
-__pycache__/
-*.pyc
 node_modules/
-.playwright/
+.env
+*.log
+*.tmp
+__pycache__/
+.venv/
